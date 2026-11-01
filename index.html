@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
+<title>iSpyWithMyLittleEye</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;touch-action:none;user-select:none;-webkit-user-select:none}
+html,body{width:100%;height:100%;overflow:hidden;background:#000}
+canvas{display:block;width:100%;height:100%}
+
+/* Кнопка паузы - маленькая, вверху справа */
+#pauseBtn{
+  position:fixed;
+  top:15px;
+  right:15px;
+  width:44px;
+  height:44px;
+  border-radius:8px;
+  background:rgba(255,170,0,0.3);
+  border:2px solid #fa0;
+  color:#fff;
+  font-size:20px;
+  font-weight:bold;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  z-index:10;
+  cursor:pointer;
+}
+#pauseBtn:active{background:rgba(255,170,0,0.6)}
+
+/* Сообщение о повороте экрана */
+#rotateMsg{
+  position:fixed;
+  top:0;left:0;right:0;bottom:0;
+  background:linear-gradient(135deg, #0a0514 0%, #1a0a2e 100%);
+  color:#0ff;
+  font-family:Arial,sans-serif;
+  z-index:100;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  padding:40px;
+}
+#rotateMsg .icon{
+  font-size:100px;
+  margin-bottom:30px;
+  animation: rotate 2s ease-in-out infinite;
+}
+@keyframes rotate{
+  0%,100%{transform:rotate(-90deg)}
+  50%{transform:rotate(-80deg)}
+}
+#rotateMsg h2{
+  color:#fff;
+  font-size:28px;
+  margin-bottom:15px;
+}
+#rotateMsg p{
+  color:#aaa;
+  font-size:18px;
+  max-width:400px;
+  line-height:1.5;
+}
+
+/* Скрываем сообщение в ландшафтной ориентации */
+@media (orientation:landscape){
+  #rotateMsg{display:none}
+}
+
+/* На маленьких экранах в портретной ориентации */
+@media (orientation:portrait){
+  #pauseBtn{display:none}
+}
+</style>
+</head>
+<body>
+
+<div id="rotateMsg">
+  <div class="icon">📱</div>
+  <h2>Переверните телефон<br>в горизонтальную ориентацию</h2>
+  <p>Игра работает только в ландшафтном режиме для лучшего игрового опыта</p>
+</div>
+
+<canvas id="c"></canvas>
+<div id="pauseBtn">❚❚</div>
+
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+let W,H;
+function resize(){W=c.width=window.innerWidth;H=c.height=window.innerHeight}
+window.addEventListener('resize',resize);
+resize();
+
+// Блокируем прокрутку и зум на телефоне
+document.addEventListener('touchmove',e=>e.preventDefault(),{passive:false});
+document.addEventListener('gesturestart',e=>e.preventDefault());
+
+const GRAVITY=0.85,JUMP=-12.5,SPEED=6.5,BLOCK=40;
+
+let player={x:100,y:400,w:40,h:40,vy:0,mode:'cube',rotation:0,onGround:false};
+let camera={x:0};
+let level={blocks:[],spikes:[],saws:[],movingBlocks:[],portals:[],finishX:10000};
+
+let bgEye={x:0,y:0,radius:180,state:'idle',timer:0,color:'#ffffff',pupilX:0,pupilY:0,veins:[]};
+for(let i=0;i<30;i++){
+  bgEye.veins.push({angle:Math.random()*Math.PI*2,length:Math.random()*80+50,width:Math.random()*3+1});
+}
+
+let boss={active:false,x:0,y:0,attacks:[],timer:0,state:'idle'};
+
+let frame=0,gameOver=false,victory=false,started=false,paused=false;
+let inputHeld=false,deathTimer=0,sawAngle=0,attempt=1;
+
+function createLevel(){
+  level.blocks=[];level.spikes=[];level.saws=[];level.movingBlocks=[];level.portals=[];
+  const groundY=H-60;let x=400;
+  
+  level.blocks.push({x:x,y:groundY-BLOCK*2,w:BLOCK,h:BLOCK});
+  level.blocks.push({x:x+BLOCK,y:groundY-BLOCK*2,w:BLOCK,h:BLOCK});
+  level.blocks.push({x:x+BLOCK*2,y:groundY-BLOCK*2,w:BLOCK,h:BLOCK});
+  x+=220;
+  level.spikes.push({x:x,y:groundY-35,w:35,h:35});x+=220;
+  level.blocks.push({x:x,y:groundY-BLOCK*2,w:BLOCK,h:BLOCK});
+  level.blocks.push({x:x+BLOCK,y:groundY-BLOCK*2,w:BLOCK,h:BLOCK});
+  level.saws.push({x:x+BLOCK*1.5,y:groundY-BLOCK*2-BLOCK,radius:18});x+=240;
+  level.spikes.push({x:x,y:groundY-35,w:35,h:35});
+  level.spikes.push({x:x+45,y:groundY-35,w:35,h:35});x+=240;
+  level.blocks.push({x:x,y:groundY-BLOCK*2,w:BLOCK,h:BLOCK});
+  level.blocks.push({x:x+BLOCK,y:groundY-BLOCK*2,w:BLOCK,h:BLOCK});
+  level.blocks.push({x:x+BLOCK*2,y:groundY-BLOCK*2,w:BLOCK,h:BLOCK});
+  level.blocks.push({x:x+BLOCK*3,y:groundY-BLOCK*2,w:BLOCK,h:BLOCK});x+=240;
+  level.blocks.push({x:x,y:groundY-BLOCK,w:BLOCK,h:BLOCK});
+  level.saws.push({x:x+BLOCK+30,y:groundY-25,radius:22});x+=220;
+  level.blocks.push({x:x,y:groundY-BLOCK*2,w:BLOCK,h:BLOCK});
+  level.blocks.push({x:x+BLOCK,y:groundY-BLOCK*2,w:BLOCK,h:BLOCK});
+  level.spikes.push({x:x+BLOCK+5,y:groundY-BLOCK*2-35,w:35,h:35});x+=240;
+  level.spikes.push({x:x,y:groundY-35,w:35,h:35});
+  level.spikes.push({x:x+45,y:groundY-35,w:35,h:35});x+=240;
+  level.movingBlocks.push({x:x,y:groundY-BLOCK*2,w:BLOCK*2,h:BLOCK,startY:groundY-BLOCK*2,endY:groundY-BLOCK*3,speed:1,dir:1});x+=240;
+  level.blocks.push({x:x,y:groundY-BLOCK,w:BLOCK,h:BLOCK});
+  level.saws.push({x:x+BLOCK+30,y:groundY-25,radius:22});
+  level.blocks.push({x:x+BLOCK+60,y:groundY-BLOCK,w:BLOCK,h:BLOCK});x+=220;
+  level.blocks.push({x:x,y:groundY-BLOCK*2,w:BLOCK,h:BLOCK});
+  level.blocks.push({x:x+BLOCK,y:groundY-BLOCK*2,w:BLOCK,h:BLOCK});
+  level.blocks.push({x:x+BLOCK*2,y:groundY-BLOCK*2,w:BLOCK,h:BLOCK});x+=240;
+  level.spikes.push({x:x,y:groundY-35,w:35,h:35});x+=220;
+  level.movingBlocks.push({x:x,y:groundY-BLOCK*2,w:BLOCK*2,h:BLOCK,startX:x,endX:x+100,speed:1.5,dir:1,horizontal:true});x+=260;
+  level.spikes.push({x:x,y:groundY-35,w:35,h:35});
+  level.spikes.push({x:x+45,y:groundY-35,w:35,h:35});x+=240;
+  level.blocks.push({x:x-40,y:groundY-BLOCK,w:BLOCK,h:BLOCK});
+  level.saws.push({x:x,y:groundY-28,radius:28});
+  level.blocks.push({x:x+60,y:groundY-BLOCK,w:BLOCK,h:BLOCK});x+=240;
+  level.blocks.push({x:x,y:groundY-BLOCK*2,w:BLOCK,h:BLOCK});
+  level.blocks.push({x:x+BLOCK,y:groundY-BLOCK*2,w:BLOCK,h:BLOCK});
+  level.blocks.push({x:x+BLOCK*2,y:groundY-BLOCK*2,w:BLOCK,h:BLOCK});
+  level.blocks.push({x:x+BLOCK*3,y:groundY-BLOCK*2,w:BLOCK,h:BLOCK});x+=260;
+  level.portals.push({x:x,y:groundY-BLOCK*5,w:BLOCK,h:BLOCK*5,type:'ship'});x+=350;
+  
+  let shipSectionLength=8000;
+  let shipEnd=x+shipSectionLength;
+  for(let bx=x;bx<shipEnd;bx+=BLOCK){
+    level.blocks.push({x:bx,y:0,w:BLOCK,h:BLOCK*2});
+  }
+  for(let bx=x;bx<shipEnd;bx+=BLOCK){
+    level.blocks.push({x:bx,y:groundY-BLOCK*2,w:BLOCK,h:BLOCK*2,isFloor:true});
+  }
+  
+  let shipX=x+200;
+  while(shipX<shipEnd-200){
+    let pattern=Math.floor(Math.random()*6);
+    if(pattern===0){let h=Math.random()*BLOCK*3+BLOCK;level.blocks.push({x:shipX,y:BLOCK*2,w:BLOCK*2,h:h});shipX+=180}
+    else if(pattern===1){let h=Math.random()*BLOCK*3+BLOCK;level.blocks.push({x:shipX,y:groundY-BLOCK*2-h,w:BLOCK*2,h:h});shipX+=180}
+    else if(pattern===2){level.saws.push({x:shipX,y:BLOCK*4+Math.random()*BLOCK*4,radius:25});shipX+=200}
+    else if(pattern===3){level.blocks.push({x:shipX,y:BLOCK*2,w:BLOCK,h:BLOCK*2});level.saws.push({x:shipX+BLOCK+50,y:groundY-BLOCK*4,radius:22});shipX+=220}
+    else if(pattern===4){level.blocks.push({x:shipX,y:BLOCK*2,w:BLOCK,h:BLOCK*3});level.blocks.push({x:shipX,y:groundY-BLOCK*5,w:BLOCK,h:BLOCK*3});shipX+=200}
+    else{level.saws.push({x:shipX,y:BLOCK*5,radius:22});level.saws.push({x:shipX+60,y:groundY-BLOCK*5,radius:22});shipX+=220}
+  }
+  
+  x=shipEnd+200;
+  boss.x=x+400;boss.y=H/2;boss.active=false;boss.attacks=[];boss.timer=0;boss.state='idle';
+  level.finishX=x+2000;
+}
+
+// Управление - тап по экрану (любое место)
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'||e.code==='ArrowUp'){e.preventDefault();inputHeld=true}
+  if(e.code==='KeyR')resetGame();
+  if(e.code==='Escape'||e.code==='KeyP')togglePause();
+  if((e.code==='Space'||e.code==='ArrowUp')&&!started&&!gameOver&&!victory&&!paused)started=true;
+});
+document.addEventListener('keyup',e=>{if(e.code==='Space'||e.code==='ArrowUp')inputHeld=false});
+
+// ТАП ПО ЭКРАНУ = ПРЫЖОК/ВЗЛЕТ
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  inputHeld=true;
+  if(!started&&!gameOver&&!victory&&!paused)started=true;
+},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();inputHeld=false});
+c.addEventListener('mousedown',e=>{
+  inputHeld=true;
+  if(!started&&!gameOver&&!victory&&!paused)started=true;
+});
+c.addEventListener('mouseup',()=>{inputHeld=false});
+
+// Кнопка паузы
+const pauseBtn=document.getElementById('pauseBtn');
+pauseBtn.addEventListener('click',togglePause);
+pauseBtn.addEventListener('touchstart',e=>{e.preventDefault();togglePause()});
+
+function togglePause(){if(gameOver||victory||!started)return;paused=!paused;pauseBtn.textContent=paused?'▶':'❚❚'}
+
+function resetGame(){
+  player={x:100,y:H-200,w:40,h:40,vy:0,mode:'cube',rotation:0,onGround:false};
+  camera.x=0;frame=0;gameOver=false;victory=false;deathTimer=0;sawAngle=0;paused=false;
+  pauseBtn.textContent='❚❚';createLevel();
+}
+
+function checkCol(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y}
+function checkSpikeCol(p,s){const m=8;return p.x+m<s.x+s.w-m&&p.x+p.w-m>s.x+m&&p.y+m<s.y+s.h-m&&p.y+p.h-m>s.y+m}
+function checkSawCol(p,s){const dx=p.x+p.w/2-s.x,dy=p.y+p.h/2-s.y;return Math.sqrt(dx*dx+dy*dy)<s.radius*0.7+p.w/2}
+
+function update(){
+  if(!started||paused)return;
+  if(gameOver){deathTimer++;if(deathTimer>90){attempt++;resetGame()}return}
+  if(victory)return;
+  
+  frame++;sawAngle+=0.15;
+  const groundY=H-60;
+  
+  bgEye.x=player.x+W*0.6;
+  bgEye.y=H*0.35;
+  bgEye.timer++;
+  let dx=player.x-bgEye.x,dy=player.y-bgEye.y,dist=Math.sqrt(dx*dx+dy*dy)||1;
+  bgEye.pupilX=bgEye.x+(dx/dist)*50;
+  bgEye.pupilY=bgEye.y+(dy/dist)*50;
+  
+  if(player.x>level.finishX-1500){
+    bgEye.radius=220;
+    if(bgEye.state==='idle'&&bgEye.timer>80){bgEye.state='warning';bgEye.timer=0;bgEye.color='#ffaa00'}
+    else if(bgEye.state==='warning'&&bgEye.timer>30){
+      bgEye.state='attack';bgEye.timer=0;bgEye.color='#ff0000';
+      let roll=Math.random();
+      if(roll<0.4)boss.attacks.push({type:'laser',x:bgEye.x-1500,y:player.y-20,w:3000,h:40,life:40});
+      else if(roll<0.7){for(let i=0;i<6;i++)boss.attacks.push({type:'spike',x:bgEye.x+300+i*100,y:Math.random()*(H-200)+100,w:40,h:40,vx:-12})}
+      else boss.attacks.push({type:'charge',x:bgEye.x,y:bgEye.y,w:120,h:120,vx:-20});
+    }
+    else if(bgEye.state==='attack'&&bgEye.timer>60){bgEye.state='idle';bgEye.timer=0;bgEye.color='#ffffff'}
+  }else{
+    bgEye.radius=180;
+    bgEye.state='idle';bgEye.color='#ffffff';
+  }
+  
+  player.onGround=false;
+  if(player.mode==='cube'){player.vy+=GRAVITY;player.rotation+=8}
+  else if(player.mode==='ship'){player.vy+=inputHeld?-0.9:0.6;player.vy=Math.max(-9,Math.min(9,player.vy));player.rotation=player.vy*4}
+  
+  const steps=3,stepX=SPEED/steps;
+  for(let step=0;step<steps;step++){
+    player.x+=stepX;player.y+=player.vy/steps;
+    level.blocks.forEach(b=>{
+      if(checkCol(player,b)){
+        if(player.mode==='ship'&&b.isFloor){gameOver=true;deathTimer=0;return}
+        const ox=Math.min(player.x+player.w-b.x,b.x+b.w-player.x);
+        const oy=Math.min(player.y+player.h-b.y,b.y+b.h-player.y);
+        if(ox<oy)player.x-=ox*(player.x<b.x+b.w/2?1:-1);
+        else{player.y-=oy*(player.y<b.y+b.h/2?1:-1);player.vy=0;player.onGround=true}
+      }
+    });
+    level.movingBlocks.forEach(m=>{
+      if(checkCol(player,m)){
+        const ox=Math.min(player.x+player.w-m.x,m.x+m.w-player.x);
+        const oy=Math.min(player.y+player.h-m.y,m.y+m.h-player.y);
+        if(ox<oy)player.x-=ox*(player.x<m.x+m.w/2?1:-1);
+        else{player.y-=oy*(player.y<m.y+m.h/2?1:-1);player.vy=0;player.onGround=true}
+      }
+    });
+  }
+  
+  if(player.mode==='cube'){
+    if(player.y+player.h>groundY){player.y=groundY-player.h;player.vy=0;player.onGround=true;player.rotation=Math.round(player.rotation/90)*90}
+    else if(player.y<0){player.y=0;player.vy=0}
+  }else{
+    if(player.y+player.h>groundY){gameOver=true;deathTimer=0}
+    else if(player.y<0){player.y=0;player.vy=0}
+  }
+  
+  if(player.mode==='cube'&&inputHeld&&player.onGround){player.vy=JUMP;player.onGround=false}
+  
+  level.movingBlocks.forEach(m=>{
+    if(m.horizontal){m.x+=m.speed*m.dir;if(m.x>m.endX||m.x<m.startX)m.dir*=-1}
+    else{m.y+=m.speed*m.dir;if(m.y>m.endY||m.y<m.startY)m.dir*=-1}
+  });
+  
+  level.spikes.forEach(s=>{if(checkSpikeCol(player,s)){gameOver=true;deathTimer=0}});
+  level.saws.forEach(s=>{if(checkSawCol(player,s)){gameOver=true;deathTimer=0}});
+  level.portals.forEach(p=>{if(checkCol(player,p)){player.mode=p.type;if(p.type==='ship')player.y=H/2}});
+  
+  for(let i=boss.attacks.length-1;i>=0;i--){
+    let a=boss.attacks[i];
+    if(a.vx)a.x+=a.vx;if(a.vy)a.y+=a.vy;
+    if(a.life!==undefined){a.life--;if(a.life<=0){boss.attacks.splice(i,1);continue}}
+    else if(a.x<camera.x-500){boss.attacks.splice(i,1);continue}
+    if(checkCol(player,a)){gameOver=true;deathTimer=0}
+  }
+  
+  camera.x=player.x-W*0.3;
+  if(player.x>level.finishX)victory=true;
+}
+
+function drawBgEye(){
+  ctx.save();
+  ctx.globalAlpha=0.25;
+  let glow=ctx.createRadialGradient(bgEye.x,bgEye.y,0,bgEye.x,bgEye.y,bgEye.radius*2.5);
+  glow.addColorStop(0,bgEye.color+'80');
+  glow.addColorStop(1,'transparent');
+  ctx.fillStyle=glow;
+  ctx.fillRect(bgEye.x-bgEye.radius*3,bgEye.y-bgEye.radius*3,bgEye.radius*6,bgEye.radius*6);
+  ctx.strokeStyle=bgEye.color;
+  bgEye.veins.forEach(v=>{
+    ctx.lineWidth=v.width;
+    ctx.beginPath();
+    ctx.moveTo(bgEye.x,bgEye.y);
+    let ex=bgEye.x+Math.cos(v.angle)*(bgEye.radius+v.length);
+    let ey=bgEye.y+Math.sin(v.angle)*(bgEye.radius+v.length);
+    ctx.lineTo(ex,ey);
+    ctx.stroke();
+  });
+  ctx.beginPath();
+  ctx.arc(bgEye.x,bgEye.y,bgEye.radius,0,Math.PI*2);
+  ctx.fillStyle=bgEye.color;
+  ctx.fill();
+  ctx.strokeStyle='#000';
+  ctx.lineWidth=6;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(bgEye.pupilX,bgEye.pupilY,45,0,Math.PI*2);
+  ctx.fillStyle='#000';
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(bgEye.pupilX-15,bgEye.pupilY-15,15,0,Math.PI*2);
+  ctx.fillStyle='#fff';
+  ctx.fill();
+  if(bgEye.state!=='idle'){
+    ctx.beginPath();
+    ctx.arc(bgEye.x,bgEye.y,bgEye.radius+25,0,Math.PI*2);
+    ctx.strokeStyle=bgEye.color;
+    ctx.lineWidth=5;
+    ctx.setLineDash([20,15]);
+    ctx.lineDashOffset=-frame*5;
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  ctx.restore();
+}
+
+function draw(){
+  let bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#0a0514');bg.addColorStop(1,'#1a0a2e');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+  
+  ctx.save();ctx.translate(-camera.x,0);
+  
+  const groundY=H-60;
+  ctx.fillStyle='#111122';ctx.fillRect(camera.x,groundY,W,60);
+  ctx.strokeStyle='#0ff';ctx.lineWidth=3;ctx.shadowBlur=10;ctx.shadowColor='#0ff';
+  ctx.beginPath();ctx.moveTo(camera.x,groundY);ctx.lineTo(camera.x+W,groundY);ctx.stroke();ctx.shadowBlur=0;
+  
+  drawBgEye();
+  
+  level.blocks.forEach(b=>{
+    ctx.fillStyle=b.isFloor?'#3a1a1a':'#2a2a3a';
+    ctx.fillRect(b.x,b.y,b.w,b.h);
+    ctx.strokeStyle=b.isFloor?'#f44':'#0ff';
+    ctx.lineWidth=2;
+    ctx.strokeRect(b.x,b.y,b.w,b.h);
+  });
+  level.movingBlocks.forEach(m=>{ctx.fillStyle='#444';ctx.fillRect(m.x,m.y,m.w,m.h);ctx.strokeStyle='#ff0';ctx.lineWidth=3;ctx.strokeRect(m.x,m.y,m.w,m.h)});
+  level.spikes.forEach(s=>{ctx.fillStyle='#f04';ctx.beginPath();ctx.moveTo(s.x,s.y+s.h);ctx.lineTo(s.x+s.w/2,s.y);ctx.lineTo(s.x+s.w,s.y+s.h);ctx.closePath();ctx.fill()});
+  level.saws.forEach(s=>{ctx.save();ctx.translate(s.x,s.y);ctx.rotate(sawAngle);ctx.fillStyle='#888';ctx.beginPath();for(let i=0;i<8;i++){let a=(i/8)*Math.PI*2;let r=i%2===0?s.radius:s.radius*0.6;ctx.lineTo(Math.cos(a)*r,Math.sin(a)*r)}ctx.closePath();ctx.fill();ctx.beginPath();ctx.arc(0,0,s.radius*0.3,0,Math.PI*2);ctx.fillStyle='#333';ctx.fill();ctx.restore()});
+  level.portals.forEach(p=>{ctx.fillStyle='rgba(0,255,255,0.3)';ctx.fillRect(p.x,p.y,p.w,p.h);ctx.strokeStyle='#0ff';ctx.lineWidth=3;ctx.strokeRect(p.x,p.y,p.w,p.h);ctx.fillStyle='#0ff';ctx.font='bold 20px Arial';ctx.textAlign='center';ctx.fillText('SHIP',p.x+p.w/2,p.y+p.h/2)});
+  
+  boss.attacks.forEach(a=>{
+    if(a.type==='laser'){ctx.fillStyle=`rgba(255,0,0,${a.life/40})`;ctx.shadowBlur=20;ctx.shadowColor='#f00';ctx.fillRect(a.x,a.y,a.w,a.h);ctx.shadowBlur=0}
+    else if(a.type==='spike'){ctx.fillStyle='#f04';ctx.beginPath();ctx.moveTo(a.x,a.y+a.h);ctx.lineTo(a.x+a.w/2,a.y);ctx.lineTo(a.x+a.w,a.y+a.h);ctx.fill()}
+    else if(a.type==='charge'){ctx.fillStyle='#f00';ctx.beginPath();ctx.arc(a.x+a.w/2,a.y+a.h/2,a.w/2,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#fff';ctx.lineWidth=4;ctx.stroke()}
+  });
+  
+  ctx.save();ctx.translate(player.x+player.w/2,player.y+player.h/2);ctx.rotate(player.rotation*Math.PI/180);ctx.shadowBlur=15;ctx.shadowColor='#0ff';
+  if(player.mode==='cube'){ctx.fillStyle='#0ff';ctx.fillRect(-20,-20,40,40);ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.strokeRect(-20,-20,40,40);ctx.fillStyle='#000';ctx.fillRect(6,-10,12,12);ctx.fillStyle='#fff';ctx.fillRect(9,-8,5,5)}
+  else{ctx.fillStyle='#0ff';ctx.beginPath();ctx.moveTo(-25,0);ctx.lineTo(20,-8);ctx.lineTo(30,0);ctx.lineTo(20,8);ctx.closePath();ctx.fill();ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();ctx.fillStyle='#0ff';ctx.beginPath();ctx.moveTo(-10,-5);ctx.lineTo(5,-20);ctx.lineTo(15,-20);ctx.lineTo(10,-5);ctx.closePath();ctx.fill();ctx.stroke();ctx.beginPath();ctx.moveTo(-10,5);ctx.lineTo(5,20);ctx.lineTo(15,20);ctx.lineTo(10,5);ctx.closePath();ctx.fill();ctx.stroke();ctx.beginPath();ctx.moveTo(-20,0);ctx.lineTo(-28,-12);ctx.lineTo(-22,-12);ctx.lineTo(-18,0);ctx.closePath();ctx.fill();ctx.stroke();ctx.fillStyle='#fff';ctx.beginPath();ctx.ellipse(8,0,8,5,0,0,Math.PI*2);ctx.fill();ctx.fillStyle='#ff0';ctx.shadowBlur=10;ctx.shadowColor='#ff0';ctx.beginPath();ctx.arc(-25,0,4,0,Math.PI*2);ctx.fill()}
+  ctx.restore();ctx.shadowBlur=0;
+  
+  ctx.fillStyle='#0f0';ctx.fillRect(level.finishX,0,20,H);
+  ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';ctx.fillText('FINISH',level.finishX+10,100);
+  ctx.restore();
+  
+  ctx.fillStyle='#fff';ctx.font='bold 24px Arial';ctx.textAlign='left';
+  let progress=Math.floor((player.x/level.finishX)*100);
+  ctx.fillText(`Прогресс: ${Math.min(progress,100)}%`,20,40);
+  ctx.textAlign='right';ctx.fillText(`Попытка ${attempt}`,W-20,40);
+  
+  if(!started){ctx.fillStyle='rgba(0,0,0,0.9)';ctx.fillRect(0,0,W,H);ctx.fillStyle='#0ff';ctx.font='bold 72px Arial';ctx.textAlign='center';ctx.fillText('iSpyWithMyLittleEye',W/2,H/2-60);ctx.font='bold 36px Arial';ctx.fillStyle='#fa0';ctx.fillText(`Попытка ${attempt}`,W/2,H/2);ctx.font='28px Arial';ctx.fillStyle='#fff';ctx.fillText('Нажми на экран или ПРОБЕЛ',W/2,H/2+60)}
+  if(paused){ctx.fillStyle='rgba(0,0,0,0.85)';ctx.fillRect(0,0,W,H);ctx.fillStyle='#fa0';ctx.font='bold 80px Arial';ctx.textAlign='center';ctx.fillText('ПАУЗА',W/2,H/2-80);ctx.fillStyle='#fff';ctx.font='28px Arial';ctx.fillText('Нажми на экран или ❚❚',W/2,H/2+20)}
+  if(gameOver){ctx.fillStyle=`rgba(255,0,0,${0.5-deathTimer/180})`;ctx.fillRect(0,0,W,H)}
+  if(victory){ctx.fillStyle='rgba(0,0,0,0.9)';ctx.fillRect(0,0,W,H);ctx.fillStyle='#0f0';ctx.font='bold 80px Arial';ctx.textAlign='center';ctx.fillText('УРОВЕНЬ ПРОЙДЕН!',W/2,H/2-20);ctx.fillStyle='#fff';ctx.font='28px Arial';ctx.fillText(`Попыток: ${attempt}`,W/2,H/2+40)}
+}
+
+function loop(){update();draw();requestAnimationFrame(loop)}
+createLevel();loop();
+</script>
+</body>
+</html>
